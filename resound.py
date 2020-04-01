@@ -13,32 +13,31 @@ def _validate_mode(mode):
 	# full validation will be handled by os.open
 	r = False
 	w = False
-	rv = "b"
+	plus = False
+	rmode = "b"
 	for x in mode:
 		if x == "r": r = True
-		elif x in ["a", "x", "w", "+"]: w = True
+		elif x in ["a", "x", "w"]: w = True
+		elif x in ["+"]: plus = True
 		else: continue
+		rmode += x
 
-		rv += x
-	return (rv, w)
+	mode = ["r", "a"][w]  # create if it does not exist.
+	return (mode, rmode)
 
 def _open2(file, rfile, mode):
 
 	a = None
 	b = None
 
-	(rmode, write) = _validate_mode(mode)
+	(mode, rmode) = _validate_mode(mode)
 	try:
-		if (write):
-			a = io.open(file, "a") # create if it does not exist.
-		else:
-			a = io.open(file, "r")
-
+		a = io.open(file, mode)
 		b = io.open(rfile, rmode)
-
 	except Exception as e:
-		if a: a.close()
 		raise
+	finally:
+		if a: a.close()
 
 	a.close()
 	return b
