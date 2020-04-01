@@ -132,22 +132,6 @@ class rAttr(Flag):
 
 	attrPurge = 0x0300
 
-class ResMap(object):
-	# __slots__ = []
-	def __init__(self):
-		self.flags = 0
-		self.offset = 0
-		self.size = 0
-		self.toIndex = 0
-		self.indexSize = 0
-		self.indexUsed = 0
-		self.freeListSize = 0
-		self.freeListUsed = 0
-		self.freeList = []
-		self.entries = []
-
-
-
 class ResourceWriter(object):
 
 	def __init__(self):
@@ -177,7 +161,7 @@ class ResourceWriter(object):
 
 
 	def write(self,io):
-		# only need 1 free list entry (unless reserved space is supported)
+		# only need 1 free list entry (until reserved space is supported)
 
 		# free list always has extra blank 4-bytes at end.
 		# free list available grows by 10?
@@ -236,19 +220,6 @@ class ResourceWriter(object):
 
 		return eof
 
-# class ResEntry(object):
-# 	__slots__ = ['type', 'id', 'offset', 'attr', 'size']
-# 	def __init__(self):
-# 		self.type = 0
-# 		self.id = 0
-# 		self.offset = 0
-# 		self.attr = 0
-# 		self.size = 0
-
-
-# class ResFreeBlock(object):
-# 	__slots__ = ['offset', 'size']
-
 
 
 # HyperCard assumes a sample rate of 26.32 KHz
@@ -269,26 +240,8 @@ def relative_pitch(fW, fS):
 
 
 
-# @contextmanager
-# def open_res_fork(file, mode="wb"):
-
-# 	parent = None
-# 	child = None
-# 	try:
-# 		parent = io.open(file, "r+") # create if it doesn't exist
-# 		child = io.open(file + "/..namedfork/rsrc", mode)
-# 		yield child
-
-# 	finally:
-# 		if parent: parent.close()
-# 		if child: child.close()
-
-
 r = ResourceWriter()
 r.add_resource(rTypes.rComment, 1, b"ORCA/C-Copyight 1997, Byte Works, Inc.\x0dUpdated 2020")
 fp = open_rfork("bleh.r", "wb")
 r.write(fp)
 fp.close()
-
-# with open_res_fork("bleh.r", "wb") as f:
-# 	r.write(f)
