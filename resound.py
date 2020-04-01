@@ -1,9 +1,65 @@
 import sys
 import io
+import os
 import struct
 from enum import Enum, Flag
 
-from contextlib import contextmanager
+# from contextlib import contextmanager
+
+
+def _validate_mode(mode):
+	# strips "t" format, adds "b" format, and checks if the 
+	# base file needs to be created.
+	# full validation will be handled by os.open
+	r = False
+	w = False
+	rv = "b"
+	for x in mode:
+		if x == "r": r = True
+		elif x in ["a", "x", "w", "+"]: w = True
+		else: continue
+
+		rv += x
+	return (rv, w)
+
+def _open2(file, rfile, mode):
+
+	a = None
+	b = None
+
+	(rmode, write) = _validate_mode(mode)
+	try:
+		if (write):
+			a = io.open(file, "a") # create if it does not exist.
+		else:
+			a = io.open(file, "r")
+
+		b = io.open(rfile, rmode)
+
+	except Exception as e:
+		if a: a.close()
+		raise
+
+	a.close()
+	return b
+
+
+if sys.platform == "win32":
+
+	def open_rfork(file, mode="r"):
+		# protect against c -> c:stream
+		file = os.path.realpath(file)
+		rfile = file + ":AFP_Resource"
+		return _open2(file, rfile, mode)
+
+
+if sys.platform == "darwin":
+	def open_rfork(file, mode="r"):
+		file = os.path.realpath(file)
+		rfile = file + "/..namedfork/rsrc"
+		return _open2(file, rfile, mode)
+
+
 
 
 class rTypes(Enum):
@@ -214,22 +270,26 @@ def relative_pitch(fW, fS):
 
 
 
-@contextmanager
-def open_res_fork(file, mode="wb"):
+# @contextmanager
+# def open_res_fork(file, mode="wb"):
 
-	parent = None
-	child = None
-	try:
-		parent = io.open(file, "r+") # create if it doesn't exist
-		child = io.open(file + "/..namedfork/rsrc", mode)
-		yield child
+# 	parent = None
+# 	child = None
+# 	try:
+# 		parent = io.open(file, "r+") # create if it doesn't exist
+# 		child = io.open(file + "/..namedfork/rsrc", mode)
+# 		yield child
 
-	finally:
-		if parent: parent.close()
-		if child: child.close()
+# 	finally:
+# 		if parent: parent.close()
+# 		if child: child.close()
 
 
 r = ResourceWriter()
 r.add_resource(rTypes.rComment, 1, b"ORCA/C-Copyight 1997, Byte Works, Inc.\x0dUpdated 2020")
-with open_res_fork("bleh.r", "wb") as f:
-	r.write(f)
+fp = open_rfork("bleh.r", "wb")
+r.write(fp)
+fp.close()
+
+# with open_res_fork("bleh.r", "wb") as f:
+# 	r.write(f)
