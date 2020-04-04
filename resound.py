@@ -138,27 +138,66 @@ class ResourceWriter(object):
 		self._resources = []
 		self._resource_ids = set()
 
-	# def unique_id(self, type):
-	# 	if type < 0 || type > 0x10000:
-	# 		raise Exception();
 
-	# 	used = self._id_map.get(type)
-	# 	if used: 
-
-	def add_resource(self, rtype, rid, data, attr=0):
+	def unique_resource_id(self, rtype, range):
 		if type(rtype) == rTypes: rtype = rtype.value
 		if rtype < 0 or rtype > 0xffff:
-			raise Exception()
+			raise ValueError("Invalid resource type ${:04x}".format(rtype))
 
-		if rid < 0 or rid > 0xffffffff:
-			raise Exception()
+		if range > 0xffff:
+			raise ValueError("Invalid range ${:04x}".format(range))
+		if range > 0x7ff and range < 0xffff:
+			raise ValueError("Invalid range ${:04x}".format(range))
+
+		min = range << 16
+		max = min + 0xffff
+		if range == 0:
+			min = 1
+		elif range == 0xffff:
+			min = 1
+			max = 0x07feffff
+
+		used = [x[1] for x in self._resource_ids if x[0] == rtype and x[1] >= min and x[1] <= max]
+		if len(used) == 0: return min
+
+		used.sort()
+		# if used[0] > min: return min
+
+		id = min
+		for x in used:
+			if x > id: return id
+			id = x + 1
+		if id >= max:
+			raise OverflowError("No Resource ID available in range")
+		raise id
+
+	def add_resource(self, rtype, rid, data, *, attr=0, buffer=0):
+		if type(rtype) == rTypes: rtype = rtype.value
+		if rtype < 0 or rtype > 0xffff:
+			raise ValueError("Invalid resource type ${:04x}".format(rtype))
+
+		if rid < 0 or rid > 0x07ffffff:
+			raise ValueError("Invalid resource id ${:08x}".format(rid))
 
 		if (rid, rtype) in self._resource_ids:
-			raise Exception()
+			raise ValueError("Duplicate resource ${:04x}:${:08x}".format(rtype, rid))
 
-		self._resources.append((rtype, rid, attr, data))
+		self._resources.append((rtype, rid, attr, data, buffer))
 		self._resource_ids.add((rtype, rid))
 
+	@staticmethod
+	def _merge_free_list(fl):
+		rv = []
+		eof = None
+		for (offset, size) in fl:
+			if offset == eof:
+				tt = rv.pop()
+				tt[1] += size
+				rv.append(tt)
+			else:
+				rv.append((offset, size))
+			eof = offset + size
+		return rv
 
 	def write(self,io):
 		# only need 1 free list entry (until reserved space is supported)
@@ -166,10 +205,13 @@ class ResourceWriter(object):
 		# free list always has extra blank 4-bytes at end.
 		# free list available grows by 10?
 
-		freelist_size = 10
-		freelist_used = 1
 		index_used = len(self._resources)
 		index_size = 10 + index_used // 10 * 10
+
+		freelist_used = 1
+		for x in self._resources:
+			if x[4]: freelist_used += 1
+		freelist_size = 10 + freelist_used // 10 * 10
 
 		extra = freelist_size * 8 + 4 + index_size * 20
 
@@ -191,22 +233,29 @@ class ResourceWriter(object):
 		)
 
 		eof = 0x8c + map_size
+		fl = []
 
 		index = bytearray()
-		for x in self._resources:
+		for (rtype, rid, attr, data, reserved) in self._resources:
 			# type:2, id:4, offset:4, attr:2, size:4, handle:4
 			index += struct.pack("<HIIHII",
-				x[0], x[1], eof, 
-				x[2], len(x[3]), 0
+				rtype, rid, eof, 
+				attr, len(data), 0
 			)
-			eof += len(x[3])
+			eof += len(data)
+			if reserved:
+				fl.append((eof, reserved))
+				eof += reserved
 
 		index += bytes(20 * ((index_size - index_used)))
 
-		# one free list entry at eof.
-		# need to update if growth buffer allowed after resource data...
+		fl.append((eof, 0xffffffff-eof))
+
+		fl = self._merge_free_list(fl)
+
 		freelist = bytearray()
-		freelist += struct.pack("<II", eof, 0xffffffff-eof)
+		for (offset, size) in fl:
+			freelist += struct.pack("<II", offset, size)
 		freelist += bytes(8 * (freelist_size - freelist_used) + 4)
 
 
