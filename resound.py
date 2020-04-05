@@ -3,6 +3,7 @@ import io
 import os
 import struct
 from enum import Enum, Flag
+from itertools import groupby
 
 # from contextlib import contextmanager
 
@@ -137,6 +138,7 @@ class ResourceWriter(object):
 	def __init__(self):
 		self._resources = []
 		self._resource_ids = set()
+		self._resource_names = {}
 
 
 	def unique_resource_id(self, rtype, range):
@@ -171,7 +173,7 @@ class ResourceWriter(object):
 			raise OverflowError("No Resource ID available in range")
 		raise id
 
-	def add_resource(self, rtype, rid, data, *, attr=0, buffer=0):
+	def add_resource(self, rtype, rid, data, *, attr=0, reserved=0, name=None):
 		if type(rtype) == rTypes: rtype = rtype.value
 		if rtype < 0 or rtype > 0xffff:
 			raise ValueError("Invalid resource type ${:04x}".format(rtype))
@@ -182,8 +184,38 @@ class ResourceWriter(object):
 		if (rid, rtype) in self._resource_ids:
 			raise ValueError("Duplicate resource ${:04x}:${:08x}".format(rtype, rid))
 
-		self._resources.append((rtype, rid, attr, data, buffer))
+		# don't allow standard res names since they're handled elsewhere.
+		if rtype == rTypes.rResName.value and rid > 0x00010000 and rid < 0x00020000:
+			raise ValueError("Invalid resource ${:04x}:${:08x}".format(rtype, rid))
+
+
+		if name:
+			if type(name) == str: name = name.encode('ascii')
+			if len(name) > 255: name = name[0:255]
+			self._resource_names[(rtype, name)]=rid
+
+		self._resources.append((rtype, rid, attr, data, reserved))
 		self._resource_ids.add((rtype, rid))
+
+
+
+	def set_resource_name(rtype, rid, name):
+		if type(rtype) == rTypes: rtype = rtype.value
+		if rtype < 0 or rtype > 0xffff:
+			raise ValueError("Invalid resource type ${:04x}".format(rtype))
+
+		if rid < 0 or rid > 0x07ffffff:
+			raise ValueError("Invalid resource id ${:08x}".format(rid))
+
+		key = (rtype, name)
+		if not name:
+			self._resource_names.pop(key, None)
+		else:
+			if type(name) == str: name = str.encode('ascii')
+			if len(name) > 255: name = name[0:255]
+			self._resource_names[key] = rid
+
+
 
 	@staticmethod
 	def _merge_free_list(fl):
@@ -199,22 +231,64 @@ class ResourceWriter(object):
 			eof = offset + size
 		return rv
 
+	def _build_res_names(self):
+		# format:
+		# type $8014, id $0001xxxx (where xxxx = resource type)
+		# version:2 [1]
+		# name count:4
+		# [id:4, name:pstring]+
+		#
+
+		rv = []
+		tmp = []
+
+		if not len(self._resource_names): return rv
+		for (rtype, rname), rid in self._resource_names.items():
+			tmp.append( (rtype, rid, rname) )
+
+
+		keyfunc_type = lambda x: x[0]
+		keyfunc_name = lambda x: x[2]
+		tmp.sort(key = keyfunc_type)
+		for rtype, iter in groupby(tmp, keyfunc_type):
+			tmp = list(iter)
+			tmp.sort(key=keyfunc_name)
+			data = bytearray()
+			data += struct.pack("<HI", 1, len(tmp))
+			for (_, rid, rname) in tmp:
+				data += struct.pack("<IB", rid, len(rname))
+				data += rname
+
+			rv.append( (rTypes.rResName.value, 0x00010000 | rtype, 0, data, 0) )
+
+		return rv
+
 	def write(self,io):
 		# only need 1 free list entry (until reserved space is supported)
 
 		# free list always has extra blank 4-bytes at end.
 		# free list available grows by 10?
 
-		index_used = len(self._resources)
+		resources = self._build_res_names()
+
+		resources.extend(self._resources)
+
+		index_used = len(resources)
 		index_size = 10 + index_used // 10 * 10
 
+		# remove reserved space from the last entry
+		ix = len(resources)
+		if ix and resources[ix-1][4]:
+			(rid, rtype, attr, data, _) = resources[ix-1]
+			resources[ix-1] = (rid, rtype, attr, data, 0)
+
+
 		freelist_used = 1
-		for x in self._resources:
+		for x in resources:
 			if x[4]: freelist_used += 1
 		freelist_size = 10 + freelist_used // 10 * 10
 
 		extra = freelist_size * 8 + 4 + index_size * 20
-
 
 		map_size = 32 + extra
 		map_offset = 0x8c
@@ -236,7 +310,7 @@ class ResourceWriter(object):
 		fl = []
 
 		index = bytearray()
-		for (rtype, rid, attr, data, reserved) in self._resources:
+		for (rtype, rid, attr, data, reserved) in resources:
 			# type:2, id:4, offset:4, attr:2, size:4, handle:4
 			index += struct.pack("<HIIHII",
 				rtype, rid, eof, 
@@ -264,8 +338,9 @@ class ResourceWriter(object):
 		io.write(freelist)
 		io.write(index)
 
-		for x in self._resources:
-			io.write(x[3])
+		for (_, _, attr, data, reserved) in resources:
+			io.write(data)
+			if reserved: io.write(bytes(reserved))
 
 		return eof
 
@@ -290,7 +365,8 @@ def relative_pitch(fW, fS):
 
 
 r = ResourceWriter()
-r.add_resource(rTypes.rComment, 1, b"ORCA/C-Copyight 1997, Byte Works, Inc.\x0dUpdated 2020")
+r.add_resource(rTypes.rComment, 1, b"ORCA/C-Copyight 1997, Byte Works, Inc.\x0dUpdated 2020", reserved=128, name="Comment")
+
 fp = open_rfork("bleh.r", "wb")
 r.write(fp)
 fp.close()
