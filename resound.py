@@ -4,6 +4,7 @@ import os
 import struct
 from enum import Enum, Flag
 from itertools import groupby
+import argparse
 
 # from contextlib import contextmanager
 
@@ -415,10 +416,23 @@ def relative_pitch(fW, fS):
 	if offset < 0: offset = 0x8000 | abs(offset)
 
 
+if __name__ == '__main__':
+	p = argparse.ArgumentParser()
+	p.add_argument('-c', '--comment', metavar='text', type=str)
+	p.add_argument('-o', metavar='file', type=str)
+	opts = p.parse_args()
 
-r = ResourceWriter()
-r.add_resource(rTypes.rComment, 1, b"ORCA/C-Copyight 1997, Byte Works, Inc.\x0dUpdated 2020", reserved=128, name="Comment")
+	outfile = opts.o or 'sound.r'
 
-fp = open_rfork("bleh.r", "wb")
-r.write(fp)
-fp.close()
+	r = ResourceWriter()
+
+	if opts.comment:
+		s = opts.comment.encode('mac_roman')
+		r.add_resource(rTypes.rComment, 1, s)
+
+	fp = open_rfork(outfile, "wb")
+	r.write(fp)
+	fp.close()
+	set_file_type(outfile, 0xb3, 0x1234)
+	sys.exit(0)
+
