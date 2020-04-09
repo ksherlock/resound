@@ -43,6 +43,25 @@ def _open2(file, rfile, mode):
 	a.close()
 	return b
 
+_finder_magic = {
+	(0x00, 0x0000): b"BINApdos",
+	(0x04, 0x0000): b"TEXTpdos",
+	(0xff, 0x0000): b"PSYSpdos",
+	(0xb3, 0x0000): b"PS16pdos",
+	(0xd7, 0x0000): b"MIDIpdos",
+	(0xd8, 0x0000): b"AIFFpdos",
+	(0xd7, 0x0001): b"AIFCpdos",
+	(0xe0, 0x0005): b"dImgdCpy",
+}
+_z24 = bytearray(24)
+def _make_finder_data(filetype, auxtype):
+
+	k = (filetype, auxtype)
+	x = _finder_magic.get((filetype, auxtype))
+	if not x:
+		x = struct.pack(">cBH4s", b'p', filetype & 0xff, auxtype & 0xffff, b"pdos")
+
+	return x
 
 if sys.platform == "win32":
 
@@ -52,6 +71,21 @@ if sys.platform == "win32":
 		rfile = file + ":AFP_Resource"
 		return _open2(file, rfile, mode)
 
+	def set_file_type(path, filetype, auxtype):
+		path = os.path.realpath(path)
+		path += ":AFP_AfpInfo"
+		f = open(path, "wb")
+
+		data = struct.pack("<IIII8s24xHI8x",
+			0x00504641, 0x00010000, 0, 0x80000000,
+			_make_finder_data(filetype, auxtype),
+			filetype, auxtype
+		)
+
+		f.write(data)
+		f.close()
+		return True
+
 
 if sys.platform == "darwin":
 	def open_rfork(file, mode="r"):
@@ -59,6 +93,24 @@ if sys.platform == "darwin":
 		rfile = file + "/..namedfork/rsrc"
 		return _open2(file, rfile, mode)
 
+	# os.setxattr only availble in linux.
+	import ctypes
+	_libc = ctypes.CDLL(None)
+	_setxattr = _libc.setxattr
+	_setxattr.argtypes = [ctypes.c_char_p, ctypes.c_char_p,
+		ctypes.c_void_p, ctypes.c_size_t,
+		ctypes.c_uint32, ctypes.c_int]
+	def set_file_type(path, filetype, auxtype):
+
+		data = struct.pack(">8s24x", _make_finder_data(filetype, auxtype))
+		# os.setxattr(path, "com.apple.FinderInfo", data, 0, 0)
+		# data = array.array('B', data)
+		# (address, size) = data.buffer_info()
+		ok = _setxattr(path.encode("utf-8"), b"com.apple.FinderInfo", data, 32, 0, 0)
+		e = ctypes.get_errno()
+		# print("ok: {}, errno: {}".format(ok, e))
+		if ok < 0: return False
+		return True
 
 
 
