@@ -2,8 +2,10 @@ import sys
 import io
 import os
 import struct
+from math import log2
 from enum import Enum, Flag
 from itertools import groupby
+import os.path
 import argparse
 
 # from contextlib import contextmanager
@@ -401,38 +403,120 @@ class ResourceWriter(object):
 
 # HyperCard assumes a sample rate of 26.32 KHz
 # and a pitch of 261.63 Hz (Middle C, C4)
-# See HyperCard IIGs Tech Note #3: Pitching Sampled Sounds
-def relative_pitch(fW, fS):
+# See HyperCard IIgs Tech Note #3: Pitching Sampled Sounds
+def relative_pitch(fS, fW = None):
 	# fW = frequency of sample
 	# fS = sampling rate
 
-	if fW == 0: return 0
-	r = (261.63 * fS) / (26320 * fW)
-	if r == 0: return 0
+
+	if fW: r = (261.63 * fS) / (26320 * fW)
+	else: r = fS / 26320
+
 
 	offset = round(3072 * log2(r))
 	if (offset < -32767) or (offset > 32767):
-		raise Exception()
+		raise Exception("Offset too big")
 	if offset < 0: offset = 0x8000 | abs(offset)
+	return offset
+
+import wave
+import audioop
+def read_wav(infile, resample = None):
+
+	# rSound Sample format:
+	# format:2 (0)
+	# wave size:2 (sample size, in pages)
+	# relative pitch:2
+	# stereo: 2
+	# sample rate:2
+	# sound data....
+
+
+	rv = bytearray()
+	tr = b"\x01" + bytes(range(1,256))
+
+
+	rv += struct.pack("<10x")
+
+	w = wave.open(infile, "rb")
+
+	# info = w.getparams()
+	width = w.getsampwidth() # info.sampwidth
+
+	channels = w.getnchannels()
+	rate = w.getframerate()
+
+	cookie = None
+	while True:
+		frames = w.readframes(10)
+		if not frames: break
+
+		if channels > 1:
+			frames = audioop.tomono(frames, width, 0.5, 0.5)
+
+		if resample:
+			frames, cookie = audioop.ratecv(frames, width, 1, rate, resample, cookie)
+
+		if width != 1:
+			frames = audioop.lin2lin(frames, width, 1)
+			frames = audioop.bias(frames, 1, 128)
+
+		frames = frames.translate(tr)
+		rv += frames
+	w.close()
+
+	# based on system 6 samples, pages rounds down....
+	pages = (len(rv)-10) >> 8
+	hz = resample or rate
+
+	struct.pack_into("<HHHHH", rv, 0,
+		0, # format
+		pages, # wave size in pages
+		relative_pitch(hz),
+		0, # stereo ???
+		hz # hz
+	)
+
+
+	return rv
+
+
+def path2name(p):
+	a, b = os.path.splitext(os.path.basename(p))
+	return a	 
 
 
 if __name__ == '__main__':
 	p = argparse.ArgumentParser()
+	p.add_argument('files', metavar='file', type=str, nargs='+')
 	p.add_argument('-c', '--comment', metavar='text', type=str)
+	p.add_argument('-n', '--name', metavar='name', type=str)
+	p.add_argument('-s', '--sample', metavar='rate', type=int)
 	p.add_argument('-o', metavar='file', type=str)
 	opts = p.parse_args()
 
 	outfile = opts.o or 'sound.r'
 
-	r = ResourceWriter()
 
+	if len(opts.files) > 1:
+		opts.name = None
+
+
+	r = ResourceWriter()
 	if opts.comment:
 		s = opts.comment.encode('mac_roman')
 		r.add_resource(rTypes.rComment, 1, s)
 
+	n = 1
+	for f in opts.files:
+		name = opts.name or path2name(f)
+		data = read_wav(f, opts.sample)
+		r.add_resource(rTypes.rSoundSample, n, data, name=name)
+		n = n + 1
+
 	fp = open_rfork(outfile, "wb")
 	r.write(fp)
 	fp.close()
-	set_file_type(outfile, 0xb3, 0x1234)
+	set_file_type(outfile, 0xd8, 0x0003)
 	sys.exit(0)
 
