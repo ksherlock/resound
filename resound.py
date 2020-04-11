@@ -7,8 +7,7 @@ from enum import Enum, Flag
 from itertools import groupby
 import os.path
 import argparse
-
-# from contextlib import contextmanager
+import re
 
 
 def _validate_mode(mode):
@@ -96,7 +95,7 @@ if sys.platform == "darwin":
 		rfile = file + "/..namedfork/rsrc"
 		return _open2(file, rfile, mode)
 
-	# os.setxattr only availble in linux.
+	# os.setxattr only available in linux.
 	import ctypes
 	_libc = ctypes.CDLL(None)
 	_setxattr = _libc.setxattr
@@ -349,7 +348,7 @@ class ResourceWriter(object):
 		map_offset = 0x8c
 
 		# version, offset to map, sizeof map, 128 bytes (reserved) 
-		rheader = struct.pack("<III128s", 0, map_offset, map_size, b"\x00")
+		rheader = struct.pack("<III128x", 0, map_offset, map_size)
 
 		# handle:4, flags:2, offset:4, size:4, toindex:2, filenum:2, id:2,
 		# indexSize:4, indexUsed:4, flSize:2,flUsed:2,
