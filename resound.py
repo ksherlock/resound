@@ -420,7 +420,7 @@ def relative_pitch(fS, fW = None):
 
 import wave
 import audioop
-def read_wav(infile, resample = None, freq=None):
+def read_wav(infile, new_rate = None, freq=None):
 
 	# rSound Sample format:
 	# format:2 (0)
@@ -439,8 +439,7 @@ def read_wav(infile, resample = None, freq=None):
 
 	w = wave.open(infile, "rb")
 
-	# info = w.getparams()
-	width = w.getsampwidth() # info.sampwidth
+	width = w.getsampwidth()
 
 	channels = w.getnchannels()
 	rate = w.getframerate()
@@ -457,8 +456,8 @@ def read_wav(infile, resample = None, freq=None):
 		if channels > 1:
 			frames = audioop.tomono(frames, width, 0.5, 0.5)
 
-		if resample:
-			frames, cookie = audioop.ratecv(frames, width, 1, rate, resample, cookie)
+		if new_rate:
+			frames, cookie = audioop.ratecv(frames, width, 1, rate, new_rate, cookie)
 
 		if width != 1:
 			frames = audioop.lin2lin(frames, width, 1)
@@ -470,7 +469,7 @@ def read_wav(infile, resample = None, freq=None):
 
 	# based on system 6 samples, pages rounds down....
 	pages = (len(rv)-10) >> 8
-	hz = resample or rate
+	hz = new_rate or rate
 
 	struct.pack_into("<HHHHH", rv, 0,
 		0, # format
@@ -527,15 +526,22 @@ def freq_func(x):
 if __name__ == '__main__':
 	p = argparse.ArgumentParser(prog='resound')
 	p.add_argument('files', metavar='file', type=str, nargs='+')
-	p.add_argument('-c', '--comment', metavar='text', type=str)
-	p.add_argument('-n', '--name', metavar='name', type=str)
-	p.add_argument('-s', '--sample', metavar='rate', type=int)
-	p.add_argument('-o', metavar='file', type=str)
-	p.add_argument('-f', '--freq', metavar='freq', type=freq_func)
-	p.add_argument('--version', action='version', version='resound 1.0')
+	p.add_argument('-c', '--comment', metavar='text', type=str, help="Set rComment")
+	p.add_argument('-n', '--name', metavar='name', type=str, help="Set rSoundSample name")
+	p.add_argument('-r', '--rate', metavar='rate', type=int, help="Convert the sample rate")
+	p.add_argument('-f', '--freq', metavar='freq', type=freq_func, help="Specify sample frequency")
+	# p.add_argument('--version', action='version', version='resound 1.0')
+	p.add_argument('--df', action="store_true", help="Write to a regular file")
+	p.add_argument('-o', metavar='file', type=str, help="Specify output file")
 	opts = p.parse_args()
 
+
 	outfile = opts.o or 'sound.r'
+
+	df = opts.df or not sys.platform in ("win32", "darwin")
+	if df:
+		set_file_type = lambda x,y,z: None
+		open_rfork = io.open
 
 
 	if len(opts.files) > 1:
@@ -550,7 +556,7 @@ if __name__ == '__main__':
 	n = 1
 	for f in opts.files:
 		name = opts.name or path2name(f)
-		data = read_wav(f, opts.sample, opts.freq)
+		data = read_wav(f, opts.rate, opts.freq)
 		r.add_resource(rTypes.rSoundSample, n, data, name=name)
 		n = n + 1
 
