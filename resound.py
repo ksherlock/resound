@@ -421,7 +421,7 @@ def relative_pitch(fS, fW = None):
 
 import wave
 import audioop
-def read_wav(infile, resample = None):
+def read_wav(infile, resample = None, freq=None):
 
 	# rSound Sample format:
 	# format:2 (0)
@@ -433,10 +433,10 @@ def read_wav(infile, resample = None):
 
 
 	rv = bytearray()
-	tr = b"\x01" + bytes(range(1,256))
+	tr = b"\x01" + bytes(range(1,256)) # remap 0 -> 1
 
 
-	rv += struct.pack("<10x")
+	rv += struct.pack("<10x") # header filled in later
 
 	w = wave.open(infile, "rb")
 
@@ -446,9 +446,13 @@ def read_wav(infile, resample = None):
 	channels = w.getnchannels()
 	rate = w.getframerate()
 
+	if channels > 2:
+		raise Exception("{}: Too many channels ({})".format(infile, channels))
+
+
 	cookie = None
 	while True:
-		frames = w.readframes(10)
+		frames = w.readframes(32)
 		if not frames: break
 
 		if channels > 1:
@@ -472,7 +476,7 @@ def read_wav(infile, resample = None):
 	struct.pack_into("<HHHHH", rv, 0,
 		0, # format
 		pages, # wave size in pages
-		relative_pitch(hz),
+		relative_pitch(hz, freq),
 		0, # stereo ???
 		hz # hz
 	)
@@ -486,13 +490,50 @@ def path2name(p):
 	return a	 
 
 
+
+def freq_func(x):
+
+	freq0 = {
+		'c': 16.35160,
+		'c#': 17.32391,
+		'db': 17.32391,
+		'd': 18.35405,
+		'd#': 19.44544,
+		'eb': 19.44544,
+		'e': 20.60172,
+		'f': 21.82676,
+		'f#': 23.12465,
+		'gb': 23.12465,
+		'g': 24.49971,
+		'g#': 25.95654,
+		'ab': 25.95654,
+		'a': 27.5,
+		'a#': 29.13524,
+		'bb': 29.13524,
+		'b': 30.86771,
+	}
+
+	# allow C4, C#1, Bb2, etc
+	# -or- a float
+	m = re.match("([A-Ga-g][#b]?)([0-8])", x)
+	if m:
+		a = m[1].lower()
+		n = int(m[2])
+
+		base = freq0[a]
+		return base * (2 ** n)
+
+	return float(x)
+
 if __name__ == '__main__':
-	p = argparse.ArgumentParser()
+	p = argparse.ArgumentParser(prog='resound')
 	p.add_argument('files', metavar='file', type=str, nargs='+')
 	p.add_argument('-c', '--comment', metavar='text', type=str)
 	p.add_argument('-n', '--name', metavar='name', type=str)
 	p.add_argument('-s', '--sample', metavar='rate', type=int)
 	p.add_argument('-o', metavar='file', type=str)
+	p.add_argument('-f', '--freq', metavar='freq', type=freq_func)
+	p.add_argument('--version', action='version', version='resound 1.0')
 	opts = p.parse_args()
 
 	outfile = opts.o or 'sound.r'
@@ -510,7 +551,7 @@ if __name__ == '__main__':
 	n = 1
 	for f in opts.files:
 		name = opts.name or path2name(f)
-		data = read_wav(f, opts.sample)
+		data = read_wav(f, opts.sample, opts.freq)
 		r.add_resource(rTypes.rSoundSample, n, data, name=name)
 		n = n + 1
 
