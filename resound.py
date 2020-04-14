@@ -8,6 +8,7 @@ from itertools import groupby
 import os.path
 import argparse
 import re
+import audioop
 
 
 def _validate_mode(mode):
@@ -418,9 +419,37 @@ def relative_pitch(fS, fW = None):
 	if offset < 0: offset = 0x8000 | abs(offset)
 	return offset
 
-import wave
-import audioop
-def read_wav(infile, new_rate = None, freq=None):
+
+def open_audio(file):
+
+	_, ext = os.path.splitext(os.path.basename(file))
+	ext = ext.lower()
+
+	# if ext in (".wav", ".wave"):
+	# 	import wave
+	# 	return wave.open(file, "rb"), 'little', 128
+
+
+	if ext in (".aiff", ".aifc", ".aif"):
+		import aifc
+		return aifc.open(file, "rb"), 'big', 'AIFF'
+
+	if ext in (".au", ".snd"):
+		import sunau
+		return sunau.open(file, "rb"), 'big', 'SUN'
+
+	# default
+	import wave
+	return wave.open(file, "rb"), 'little', 'WAVE'
+
+def _to_str(x):
+	# .au files a byte instead of a string for the compression. Thanks.
+	if type(x) == bytes: return x.decode('ASCII')
+	return x
+
+def convert_audio(infile, new_rate=None, freq=None):
+
+	global verbose
 
 	# rSound Sample format:
 	# format:2 (0)
@@ -430,6 +459,8 @@ def read_wav(infile, new_rate = None, freq=None):
 	# sample rate:2
 	# sound data....
 
+	if verbose: print("Input File: {}".format(infile))
+
 
 	rv = bytearray()
 	tr = b"\x01" + bytes(range(1,256)) # remap 0 -> 1
@@ -437,12 +468,23 @@ def read_wav(infile, new_rate = None, freq=None):
 
 	rv += struct.pack("<10x") # header filled in later
 
-	w = wave.open(infile, "rb")
+	src, byteorder, fmt = open_audio(infile)
 
-	width = w.getsampwidth()
+	width = src.getsampwidth()
+	channels = src.getnchannels()
+	rate = src.getframerate()
+	bias = 128
+	swap = width > 1 and sys.byteorder != byteorder
+	if width == 1 and fmt == 'wave': bias = 0
 
-	channels = w.getnchannels()
-	rate = w.getframerate()
+	if verbose:
+		print("Input:  {} ch, {} Hz, {}-bit, {} ({} frames)".format(
+				channels,
+				rate,
+				width*8,
+				fmt,
+				src.getnframes()
+		))
 
 	if channels > 2:
 		raise Exception("{}: Too many channels ({})".format(infile, channels))
@@ -450,8 +492,11 @@ def read_wav(infile, new_rate = None, freq=None):
 
 	cookie = None
 	while True:
-		frames = w.readframes(32)
+		frames = src.readframes(32)
 		if not frames: break
+
+		if swap:
+			frames = audioop.byteswap(frames, width)
 
 		if channels > 1:
 			frames = audioop.tomono(frames, width, 0.5, 0.5)
@@ -461,65 +506,57 @@ def read_wav(infile, new_rate = None, freq=None):
 
 		if width != 1:
 			frames = audioop.lin2lin(frames, width, 1)
-			frames = audioop.bias(frames, 1, 128)
+		if bias:
+			frames = audioop.bias(frames, 1, bias)
 
 		frames = frames.translate(tr)
 		rv += frames
-	w.close()
+	src.close()
 
 	# based on system 6 samples, pages rounds down....
 	pages = (len(rv)-10) >> 8
 	hz = new_rate or rate
+	rp = relative_pitch(hz, freq)
 
 	struct.pack_into("<HHHHH", rv, 0,
 		0, # format
 		pages, # wave size in pages
-		relative_pitch(hz, freq),
+		rp,
 		0, # stereo ???
 		hz # hz
 	)
 
+	if verbose:
+		print("Output: 1 ch, {} Hz, 8-bit, rSoundSample ({} frames, {:.02f} Hz)".format(
+			hz, len(rv)-10, freq or 261.63))
+		print()
 
 	return rv
 
 
 def path2name(p):
-	a, b = os.path.splitext(os.path.basename(p))
+	a, _ = os.path.splitext(os.path.basename(p))
 	return a	 
 
+
+def note_freq(note, accidental, octave):
+	note = note.upper()
+	# a = "AxBCxDxEFxGx".index(note)
+	a = "CxDxEFxGxAxB".index(note)-9
+	if accidental == "#": a += 1
+	if accidental == "b": a -= 1
+
+	f = 440.0 * (2 ** (a/12))
+	f *= 2 ** (octave-4)
+	return f
 
 
 def freq_func(x):
 
-	freq0 = {
-		'c': 16.35160,
-		'c#': 17.32391,
-		'db': 17.32391,
-		'd': 18.35405,
-		'd#': 19.44544,
-		'eb': 19.44544,
-		'e': 20.60172,
-		'f': 21.82676,
-		'f#': 23.12465,
-		'gb': 23.12465,
-		'g': 24.49971,
-		'g#': 25.95654,
-		'ab': 25.95654,
-		'a': 27.5,
-		'a#': 29.13524,
-		'bb': 29.13524,
-		'b': 30.86771,
-	}
-
 	# allow C4, C#1, Bb2, etc
 	# -or- a float
-	m = re.match("([A-Ga-g][#b]?)([0-8])", x)
-	if m:
-		a = m[1].lower()
-		n = int(m[2])
-
-		base = freq0[a]
-		return base * (2 ** n)
+	m = re.match("^([A-Ga-g])([#b])?([0-8])$", x)
+	if m: return note_freq(m[1], m[2], int(m[3]))
 
 	return float(x)
 
@@ -531,10 +568,14 @@ if __name__ == '__main__':
 	p.add_argument('-r', '--rate', metavar='rate', type=int, help="Convert the sample rate")
 	p.add_argument('-f', '--freq', metavar='freq', type=freq_func, help="Specify sample frequency")
 	# p.add_argument('--version', action='version', version='resound 1.0')
+	p.add_argument('-v', '--verbose', action='store_true', help="Be verbose")
 	p.add_argument('--df', action="store_true", help="Write to a regular file")
 	p.add_argument('-o', metavar='file', type=str, help="Specify output file")
 	opts = p.parse_args()
 
+	global verbose
+
+	verbose = opts.verbose
 
 	outfile = opts.o or 'sound.r'
 
@@ -556,7 +597,7 @@ if __name__ == '__main__':
 	n = 1
 	for f in opts.files:
 		name = opts.name or path2name(f)
-		data = read_wav(f, opts.rate, opts.freq)
+		data = convert_audio(f, opts.rate, opts.freq)
 		r.add_resource(rTypes.rSoundSample, n, data, name=name)
 		n = n + 1
 
