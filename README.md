@@ -4,7 +4,14 @@ Python 3 required.
 
     resound [flags] file.wav [file2.wav ...]
 
-WAV files are converted to mono, optionally resampled, and converted to 8-bit unsigned audio rSoundSample resources
+Audio files are converted to mono, optionally resampled, and converted to 8-bit unsigned audio rSoundSample resources
+
+Supported formats include:
+
+* WAV (`.wav`)
+* AIFF/AIFC (`.aiff`, `.aifc`)
+* SUN/NeXT Audio (`.au`)
+
 
 ## Flags:
 
@@ -14,5 +21,6 @@ WAV files are converted to mono, optionally resampled, and converted to 8-bit un
 * `-r rate`, `--rate`: resample to a new rate. Default rate is whatever the WAV file was.
 * `-o file`: Specify output file (default is sound.r)
 * `--df`: write the resource data to the data fork
+* `-v`, `--verbose`: Be verbose about it
 
 On OS X and Win32, data will be written to the resource fork (and the filetype/auxtype will be set) unless the `--df` flag is used.  Elsewhere, `--df` is implied.
